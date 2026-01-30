@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cream: rgb(240, 227, 202);
+  --color-orange: rgb(255, 131, 3);
+  --color-brown: rgb(163, 87, 9);
+  --color-dark: rgb(27, 26, 23);
+  --color-light-bg: rgb(240, 227, 202);
+}
+
+body {
+  font-family: 'Nunito', sans-serif;
+  background-color: var(--light-bg);
+  color: var(--dark);
+  line-height: 1.6;
+}
+
+.reading-text {
+  font-family: 'Lato', sans-serif;
+}

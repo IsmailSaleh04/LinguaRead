@@ -1,0 +1,2228 @@
+// ============================================
+// FILE: src/lib/supabase.ts
+// ============================================
+import { createClient }
+
+// ============================================
+// FILE: supabase/migrations/001_initial_schema.sql
+// ============================================
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Profiles table
+CREATE TABLE profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email TEXT,
+  native_language TEXT,
+  target_language TEXT,
+  proficiency_level TEXT,
+  interests TEXT[],
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Articles table
+CREATE TABLE articles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title TEXT NOT NULL,
+  summary TEXT,
+  cached_text TEXT NOT NULL,
+  url TEXT,
+  topic TEXT,
+  word_count INTEGER,
+  difficulty TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- User articles (junction table for user-article relationship)
+CREATE TABLE user_articles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  article_id UUID REFERENCES articles(id) ON DELETE CASCADE,
+  progress INTEGER DEFAULT 0,
+  completed BOOLEAN DEFAULT FALSE,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  UNIQUE(user_id, article_id)
+);
+
+-- User words table
+CREATE TABLE user_words (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  word TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('unknown', 'learning', 'known')),
+  difficulty TEXT,
+  definition TEXT,
+  context TEXT,
+  last_seen TIMESTAMPTZ DEFAULT NOW(),
+  times_seen INTEGER DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, word)
+);
+
+-- Click analytics table
+CREATE TABLE click_analytics (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  article_id UUID REFERENCES articles(id) ON DELETE CASCADE,
+  word TEXT NOT NULL,
+  clicked_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes for better query performance
+CREATE INDEX idx_user_articles_user_id ON user_articles(user_id);
+CREATE INDEX idx_user_articles_article_id ON user_articles(article_id);
+CREATE INDEX idx_user_words_user_id ON user_words(user_id);
+CREATE INDEX idx_user_words_status ON user_words(status);
+CREATE INDEX idx_click_analytics_user_id ON click_analytics(user_id);
+CREATE INDEX idx_click_analytics_word ON click_analytics(word);
+
+-- Row Level Security (RLS) policies
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_articles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_words ENABLE ROW LEVEL SECURITY;
+ALTER TABLE click_analytics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE articles ENABLE ROW LEVEL SECURITY;
+
+-- Profiles policies
+CREATE POLICY "Users can view their own profile"
+  ON profiles FOR SELECT
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can update their own profile"
+  ON profiles FOR UPDATE
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert their own profile"
+  ON profiles FOR INSERT
+  WITH CHECK (auth.uid() = id);
+
+-- Articles policies (public read)
+CREATE POLICY "Anyone can view articles"
+  ON articles FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "Anyone can create articles"
+  ON articles FOR INSERT
+  TO authenticated
+  WITH CHECK (true);
+
+-- User articles policies
+CREATE POLICY "Users can view their own articles"
+  ON user_articles FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own article relationships"
+  ON user_articles FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own article relationships"
+  ON user_articles FOR UPDATE
+  USING (auth.uid() = user_id);
+
+-- User words policies
+CREATE POLICY "Users can view their own words"
+  ON user_words FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own words"
+  ON user_words FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own words"
+  ON user_words FOR UPDATE
+  USING (auth.uid() = user_id);
+
+-- Click analytics policies
+CREATE POLICY "Users can view their own analytics"
+  ON click_analytics FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own analytics"
+  ON click_analytics FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+-- Function to automatically create profile on signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $
+BEGIN
+  INSERT INTO public.profiles (id, email, created_at, updated_at)
+  VALUES (NEW.id, NEW.email, NOW(), NOW());
+  RETURN NEW;
+END;
+$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger to call the function
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+// ============================================
+// FILE: .env.local.example
+// ============================================
+# Supabase Configuration
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# Optional: For production
+# SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+// ============================================
+// FILE: package.json (dependencies to add)
+// ============================================
+{
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.6.2",
+    "lucide-react": "^0.263.1",
+    "next": "14.0.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.0.1",
+    "postcss": "^8",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5"
+  }
+}
+
+// ============================================
+// FILE: tailwind.config.ts
+// ============================================
+import type { Config } from "tailwindcss";
+
+const config: Config = {
+  content: [
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['Nunito', 'sans-serif'],
+        mono: ['Roboto Mono', 'monospace'],
+      },
+      colors: {
+        primary: 'var(--accent-primary)',
+        secondary: 'var(--accent-secondary)',
+        tertiary: 'var(--accent-tertiary)',
+      },
+    },
+  },
+  plugins: [],
+};
+
+export default config;
+
+// ============================================
+// FILE: README.md - Setup Instructions
+// ============================================
+# Langpilto - Language Learning Platform
+
+## Setup Instructions
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Supabase Setup
+1. Create a new Supabase project at https://supabase.com
+2. Go to SQL Editor and run the migration script from `supabase/migrations/001_initial_schema.sql`
+3. Copy your project URL and anon key from Settings > API
+4. Create `.env.local` file and add your credentials:
+```
+NEXT_PUBLIC_SUPABASE_URL=your_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+```
+
+### 3. Run Development Server
+```bash
+npm run dev
+```
+
+Visit http://localhost:3000
+
+### 4. Features Overview
+
+**Authentication:**
+- Register/Login with email & password
+- Automatic profile creation on signup
+
+**Onboarding:**
+- Set native and target languages
+- Choose proficiency level (A1-C2)
+- Select interests for personalized recommendations
+
+**Dashboard:**
+- View learning statistics
+- Search Wikipedia for articles
+- Continue reading saved articles
+
+**Article Reading:**
+- Click any word for instant definition
+- Mark words as Known/Learning/Unknown
+- Color-coded vocabulary tracking
+- Track reading progress
+
+**Word Bank:**
+- View all encountered words
+- Filter by status (Known/Learning/Unknown)
+- Search and track vocabulary
+- See usage statistics
+
+**Profile:**
+- Update languages and proficiency
+- Manage interests
+- View account information
+
+### 5. Database Tables
+
+- **profiles**: User learning preferences
+- **articles**: Wikipedia articles cache
+- **user_articles**: User reading progress
+- **user_words**: Vocabulary tracking
+- **click_analytics**: Word interaction analytics
+
+### 6. Key Features
+
+✅ Wikipedia article integration
+✅ Real-time word definitions
+✅ Vocabulary tracking system
+✅ Progress monitoring
+✅ Click analytics
+✅ Dark/Light theme
+✅ Responsive design
+✅ RLS security policies
+
+### 7. API Routes
+
+- `/api/profile/*` - User profile management
+- `/api/articles/*` - Article operations
+- `/api/words/*` - Vocabulary tracking
+- `/api/wiki/*` - Wikipedia integration
+
+### Tech Stack
+
+- **Frontend**: Next.js 14, React, TypeScript, Tailwind CSS
+- **Backend**: Next.js API Routes
+- **Database**: Supabase (PostgreSQL)
+- **Authentication**: Supabase Auth
+- **APIs**: Wikipedia API, Free Dictionary API
+
+### Troubleshooting
+
+**Issue:** Supabase connection fails
+- Check your .env.local file has correct credentials
+- Verify Supabase project is active
+
+**Issue:** RLS policies blocking queries
+- Ensure you're authenticated
+- Check the SQL migration ran successfully
+
+**Issue:** Word definitions not loading
+- The Free Dictionary API may be rate-limited
+- Words will show "Definition not available" if lookup fails
+
+For support, check the Supabase dashboard logs and browser console.
+
+
+// ============================================
+// FILE: src/app/components/Navbar.tsx (UPDATED)
+// ============================================
+"use client";
+
+import { Menu, Sun, Moon, User, LogOut } from "lucide-react";
+import Link from "next/link";
+import { useState, useRef, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
+
+export default function Navbar({ onToggleSidebar, onToggleTheme, currentTheme }) {
+  const router = useRouter();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadUser();
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  async function loadUser() {
+    const { data: { user } } = await supabase.auth.getUser();
+    setUser(user);
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push("/auth/login");
+  }
+
+  return (
+    <header className="h-16 bg-[var(--bg-secondary)] border-b border-[var(--border-primary)] flex items-center justify-between px-6 shadow-sm">
+      <div className="flex items-center gap-4">
+        <button
+          className="md:hidden p-2 text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition"
+          onClick={onToggleSidebar}
+        >
+          <Menu size={20} />
+        </button>
+
+        <div className="text-lg font-semibold text-[var(--text-primary)]">Welcome Back</div>
+      </div>
+
+      <div className="flex items-center gap-6">
+        <nav className="hidden md:flex gap-6 text-[var(--text-secondary)]">
+          <Link href="/dashboard" className="hover:text-[var(--accent-primary)] transition">Dashboard</Link>
+          <Link href="/articles" className="hover:text-[var(--accent-primary)] transition">Articles</Link>
+          <Link href="/wordbank" className="hover:text-[var(--accent-primary)] transition">Word Bank</Link>
+        </nav>
+
+        <button
+          className="p-2 text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition"
+          onClick={onToggleTheme}
+        >
+          {currentTheme === "light" ? <Moon size={20} /> : <Sun size={20} />}
+        </button>
+
+        {/* Profile Dropdown */}
+        <div className="relative" ref={dropdownRef}>
+          <button
+            onClick={() => setProfileOpen(!profileOpen)}
+            className="w-10 h-10 rounded-full bg-[var(--accent-primary)] flex items-center justify-center text-white font-semibold shadow-lg hover:bg-[var(--accent-tertiary)] transition"
+          >
+            {user?.email?.charAt(0).toUpperCase() || "U"}
+          </button>
+
+          {profileOpen && (
+            <div className="absolute right-0 mt-2 w-64 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl shadow-xl overflow-hidden z-50 animate-slide-in">
+              <div className="p-4 border-b border-[var(--border-primary)]">
+                <div className="font-semibold text-[var(--text-primary)] truncate">
+                  {user?.email}
+                </div>
+                <div className="text-sm text-[var(--text-secondary)]">
+                  {user?.user_metadata?.name || "Language Learner"}
+                </div>
+              </div>
+
+              <div className="p-2">
+                <Link
+                  href="/profile"
+                  onClick={() => setProfileOpen(false)}
+                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-[var(--bg-tertiary)] transition text-[var(--text-primary)]"
+                >
+                  <User size={18} />
+                  <span>My Profile</span>
+                </Link>
+
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-[var(--bg-tertiary)] transition text-[var(--accent-danger)]"
+                >
+                  <LogOut size={18} />
+                  <span>Logout</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ============================================
+// FILE: src/app/articles/page.tsx (UPDATED)
+// ============================================
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { BookOpen } from "lucide-react";
+
+export default function ArticlesPage() {
+  const [userArticles, setUserArticles] = useState<any[]>([]);
+
+  useEffect(() => {
+    loadArticles();
+  }, []);
+
+  async function loadArticles() {
+    const res = await fetch("/api/articles/user");
+    const data = await res.json();
+    setUserArticles(data.articles || []);
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">Your Articles</h1>
+        <p className="text-[var(--text-secondary)]">Continue reading or start new articles</p>
+      </div>
+
+      {userArticles.length === 0 ? (
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-12 text-center">
+          <BookOpen size={48} className="mx-auto text-[var(--text-muted)] mb-4" />
+          <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
+            No articles yet
+          </h2>
+          <p className="text-[var(--text-secondary)] mb-6">
+            Search for articles on your dashboard to start learning!
+          </p>
+          <Link
+            href="/dashboard"
+            className="inline-block bg-[var(--accent-primary)] hover:bg-[var(--accent-tertiary)] text-white px-6 py-3 rounded-lg font-semibold transition"
+          >
+            Go to Dashboard
+          </Link>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {userArticles.map(ua => (
+            <Link
+              key={ua.id}
+              href={`/article/${ua.article_id}`}
+              className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-6 shadow-lg hover:border-[var(--accent-primary)]/50 hover:shadow-xl transition"
+            >
+              <div className="flex items-start justify-between mb-3">
+                <h2 className="text-xl font-bold text-[var(--text-primary)] flex-1">
+                  {ua.articles.title}
+                </h2>
+                <span className="px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded text-xs font-medium text-[var(--text-secondary)] ml-2">
+                  {ua.articles.difficulty}
+                </span>
+              </div>
+
+              <p className="text-sm text-[var(--text-secondary)] mb-4 line-clamp-3">
+                {ua.articles.summary}
+              </p>
+
+              <div className="flex items-center justify-between text-sm text-[var(--text-muted)] mb-4">
+                <span>{ua.articles.word_count} words</span>
+                <span>{new Date(ua.started_at).toLocaleDateString()}</span>
+              </div>
+
+              {/* Progress Bar */}
+              <div>
+                <div className="flex items-center justify-between text-sm mb-2">
+                  <span className="text-[var(--text-secondary)]">Progress</span>
+                  <span className="text-[var(--text-primary)] font-semibold">
+                    {ua.progress}%
+                  </span>
+                </div>
+                <div className="h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--accent-primary)] transition-all duration-500"
+                    style={{ width: `${ua.progress}%` }}
+                  />
+                </div>
+              </div>
+
+              {ua.completed && (
+                <div className="mt-3 flex items-center gap-2 text-[var(--accent-primary)] text-sm font-semibold">
+                  <BookOpen size={16} />
+                  Completed
+                </div>
+              )}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// FILE: src/app/profile/page.tsx (NEW)
+// ============================================
+"use client";
+
+import { useEffect, useState } from "react";
+import { User, Globe, Award, Settings as SettingsIcon } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+
+const languages = [
+  "English", "Spanish", "French", "German", "Italian", "Portuguese",
+  "Chinese", "Japanese", "Korean", "Arabic", "Russian", "Hindi"
+];
+
+const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
+
+const interests = [
+  "Technology", "Science", "History", "Arts", "Sports",
+  "Politics", "Business", "Health", "Travel", "Food"
+];
+
+export default function ProfilePage() {
+  const [profile, setProfile] = useState<any>(null);
+  const [editing, setEditing] = useState(false);
+  const [formData, setFormData] = useState({
+    native_language: "",
+    target_language: "",
+    proficiency_level: "",
+    interests: [] as string[],
+  });
+
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  async function loadProfile() {
+    const res = await fetch("/api/profile/get");
+    const data = await res.json();
+    setProfile(data.profile);
+    setFormData({
+      native_language: data.profile?.native_language || "",
+      target_language: data.profile?.target_language || "",
+      proficiency_level: data.profile?.proficiency_level || "",
+      interests: data.profile?.interests || [],
+    });
+  }
+
+  async function handleSave() {
+    const res = await fetch("/api/profile/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    });
+
+    if (res.ok) {
+      await loadProfile();
+      setEditing(false);
+    }
+  }
+
+  const handleInterestToggle = (interest: string) => {
+    setFormData(prev => ({
+      ...prev,
+      interests: prev.interests.includes(interest)
+        ? prev.interests.filter(i => i !== interest)
+        : [...prev.interests, interest]
+    }));
+  };
+
+  if (!profile) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-[var(--text-secondary)]">Loading profile...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">Profile</h1>
+          <p className="text-[var(--text-secondary)]">Manage your learning preferences</p>
+        </div>
+        <button
+          onClick={() => editing ? handleSave() : setEditing(true)}
+          className="bg-[var(--accent-primary)] hover:bg-[var(--accent-tertiary)] text-white px-6 py-3 rounded-lg font-semibold transition flex items-center gap-2"
+        >
+          <SettingsIcon size={20} />
+          {editing ? "Save Changes" : "Edit Profile"}
+        </button>
+      </div>
+
+      {/* Profile Card */}
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-8 shadow-lg">
+        <div className="flex items-center gap-6 mb-8">
+          <div className="w-24 h-24 rounded-full bg-[var(--accent-primary)] flex items-center justify-center text-white text-4xl font-bold">
+            {profile.email?.charAt(0).toUpperCase() || "U"}
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-1">
+              {profile.email}
+            </h2>
+            <p className="text-[var(--text-secondary)]">
+              Member since {new Date(profile.created_at).toLocaleDateString()}
+            </p>
+          </div>
+        </div>
+
+        {/* Learning Details */}
+        <div className="space-y-6">
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* Native Language */}
+            <div>
+              <label className="flex items-center gap-2 text-[var(--text-primary)] font-semibold mb-3">
+                <Globe size={20} />
+                Native Language
+              </label>
+              {editing ? (
+                <select
+                  className="w-full bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-primary)] p-3 rounded-lg focus:border-[var(--accent-primary)] focus:outline-none"
+                  value={formData.native_language}
+                  onChange={e => setFormData({...formData, native_language: e.target.value})}
+                >
+                  <option value="">Select language</option>
+                  {languages.map(lang => (
+                    <option key={lang} value={lang}>{lang}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="p-3 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg text-[var(--text-primary)]">
+                  {profile.native_language || "Not set"}
+                </div>
+              )}
+            </div>
+
+            {/* Target Language */}
+            <div>
+              <label className="flex items-center gap-2 text-[var(--text-primary)] font-semibold mb-3">
+                <Globe size={20} />
+                Target Language
+              </label>
+              {editing ? (
+                <select
+                  className="w-full bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-primary)] p-3 rounded-lg focus:border-[var(--accent-primary)] focus:outline-none"
+                  value={formData.target_language}
+                  onChange={e => setFormData({...formData, target_language: e.target.value})}
+                >
+                  <option value="">Select language</option>
+                  {languages.map(lang => (
+                    <option key={lang} value={lang}>{lang}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="p-3 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg text-[var(--text-primary)]">
+                  {profile.target_language || "Not set"}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Proficiency Level */}
+          <div>
+            <label className="flex items-center gap-2 text-[var(--text-primary)] font-semibold mb-3">
+              <Award size={20} />
+              Proficiency Level
+            </label>
+            {editing ? (
+              <div className="flex gap-2 flex-wrap">
+                {levels.map(level => (
+                  <button
+                    key={level}
+                    onClick={() => setFormData({...formData, proficiency_level: level})}
+                    className={`px-4 py-2 rounded-lg border-2 transition ${
+                      formData.proficiency_level === level
+                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]"
+                        : "border-[var(--border-primary)] text-[var(--text-secondary)] hover:border-[var(--accent-primary)]/50"
+                    }`}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="p-3 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg text-[var(--text-primary)] inline-block">
+                {profile.proficiency_level || "Not set"}
+              </div>
+            )}
+          </div>
+
+          {/* Interests */}
+          <div>
+            <label className="flex items-center gap-2 text-[var(--text-primary)] font-semibold mb-3">
+              <User size={20} />
+              Interests
+            </label>
+            {editing ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {interests.map(interest => (
+                  <button
+                    key={interest}
+                    onClick={() => handleInterestToggle(interest)}
+                    className={`p-3 rounded-lg border-2 transition text-sm ${
+                      formData.interests.includes(interest)
+                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]"
+                        : "border-[var(--border-primary)] text-[var(--text-secondary)] hover:border-[var(--accent-primary)]/50"
+                    }`}
+                  >
+                    {interest}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="flex gap-2 flex-wrap">
+                {(profile.interests || []).map((interest: string) => (
+                  <span
+                    key={interest}
+                    className="px-3 py-1 bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] rounded-full text-sm font-medium"
+                  >
+                    {interest}
+                  </span>
+                ))}
+                {(!profile.interests || profile.interests.length === 0) && (
+                  <span className="text-[var(--text-muted)]">No interests selected</span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {editing && (
+        <div className="flex gap-4 justify-end">
+          <button
+            onClick={() => {
+              setEditing(false);
+              setFormData({
+                native_language: profile.native_language || "",
+                target_language: profile.target_language || "",
+                proficiency_level: profile.proficiency_level || "",
+                interests: profile.interests || [],
+              });
+            }}
+            className="px-6 py-3 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-tertiary)]/80 text-[var(--text-primary)] rounded-lg font-semibold transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            className="px-6 py-3 bg-[var(--accent-primary)] hover:bg-[var(--accent-tertiary)] text-white rounded-lg font-semibold transition"
+          >
+            Save Changes
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// FILE: src/app/wordbank/page.tsx (UPDATED)
+// ============================================
+"use client";
+
+import { useEffect, useState } from "react";
+import { Search } from "lucide-react";
+
+export default function WordBankPage() {
+  const [words, setWords] = useState<any[]>([]);
+  const [filteredWords, setFilteredWords] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  useEffect(() => {
+    loadWords();
+  }, []);
+
+  useEffect(() => {
+    filterWords();
+  }, [words, searchQuery, statusFilter]);
+
+  async function loadWords() {
+    const res = await fetch("/api/words/list");
+    const data = await res.json();
+    setWords(data.words || []);
+  }
+
+  function filterWords() {
+    let filtered = words;
+
+    if (statusFilter !== "all") {
+      filtered = filtered.filter(w => w.status === statusFilter);
+    }
+
+    if (searchQuery) {
+      filtered = filtered.filter(w =>
+        w.word.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    setFilteredWords(filtered);
+  }
+
+  const stats = {
+    total: words.length,
+    known: words.filter(w => w.status === "known").length,
+    learning: words.filter(w => w.status === "learning").length,
+    unknown: words.filter(w => w.status === "unknown").length,
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">Word Bank</h1>
+        <p className="text-[var(--text-secondary)]">Track your vocabulary progress</p>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-4">
+          <div className="text-2xl font-bold text-[var(--text-primary)]">{stats.total}</div>
+          <div className="text-sm text-[var(--text-secondary)]">Total Words</div>
+        </div>
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-4">
+          <div className="text-2xl font-bold text-[var(--accent-primary)]">{stats.known}</div>
+          <div className="text-sm text-[var(--text-secondary)]">Known</div>
+        </div>
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-4">
+          <div className="text-2xl font-bold text-[var(--accent-secondary)]">{stats.learning}</div>
+          <div className="text-sm text-[var(--text-secondary)]">Learning</div>
+        </div>
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-4">
+          <div className="text-2xl font-bold text-[var(--text-muted)]">{stats.unknown}</div>
+          <div className="text-sm text-[var(--text-secondary)]">Unknown</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-6">
+        <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+          <div className="relative flex-1 w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" size={20} />
+            <input
+              type="text"
+              placeholder="Search words..."
+              className="w-full pl-10 pr-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:border-[var(--accent-primary)] focus:outline-none"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="flex gap-2 flex-wrap">
+            {["all", "known", "learning", "unknown"].map(status => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`px-4 py-2 rounded-lg font-medium transition ${
+                  statusFilter === status
+                    ? "bg-[var(--accent-primary)] text-white"
+                    : "bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]/80"
+                }`}
+              >
+                {status.charAt(0).toUpperCase() + status.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Words Table */}
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-[var(--bg-tertiary)] border-b border-[var(--border-primary)]">
+              <tr>
+                <th className="text-left p-4 font-semibold text-[var(--text-primary)]">Word</th>
+                <th className="text-left p-4 font-semibold text-[var(--text-primary)]">Definition</th>
+                <th className="text-left p-4 font-semibold text-[var(--text-primary)]">Difficulty</th>
+                <th className="text-left p-4 font-semibold text-[var(--text-primary)]">Status</th>
+                <th className="text-left p-4 font-semibold text-[var(--text-primary)]">Last Seen</th>
+                <th className="text-left p-4 font-semibold text-[var(--text-primary)]">Times Seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredWords.map(word => (
+                <tr
+                  key={word.id}
+                  className="border-b border-[var(--border-primary)] hover:bg-[var(--bg-tertiary)]/50 transition"
+                >
+                  <td className="p-4">
+                    <span className="font-semibold text-[var(--text-primary)]">{word.word}</span>
+                  </td>
+                  <td className="p-4 text-[var(--text-secondary)] text-sm max-w-xs truncate">
+                    {word.definition || "No definition"}
+                  </td>
+                  <td className="p-4">
+                    <span className="px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded text-xs font-medium text-[var(--text-secondary)]">
+                      {word.difficulty}
+                    </span>
+                  </td>
+                  <td className="p-4">
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                        word.status === "known"
+                          ? "bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]"
+                          : word.status === "learning"
+                          ? "bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary)]"
+                          : "bg-[var(--text-muted)]/20 text-[var(--text-muted)]"
+                      }`}
+                    >
+                      {word.status}
+                    </span>
+                  </td>
+                  <td className="p-4 text-[var(--text-secondary)] text-sm">
+                    {new Date(word.last_seen).toLocaleDateString()}
+                  </td>
+                  <td className="p-4 text-[var(--text-secondary)] text-sm">
+                    {word.times_seen}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {filteredWords.length === 0 && (
+          <div className="p-12 text-center text-[var(--text-muted)]">
+            No words found. Start reading articles to build your vocabulary!
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// FILE: src/app/article/[id]/page.tsx (UPDATED)
+// ============================================
+"use client";
+
+import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { X, Bookmark, ArrowLeft } from "lucide-react";
+
+export default function ArticlePage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const [article, setArticle] = useState<any>(null);
+  const [selectedWord, setSelectedWord] = useState<string | null>(null);
+  const [wordData, setWordData] = useState<any>(null);
+  const [loadingWord, setLoadingWord] = useState(false);
+  const [userWords, setUserWords] = useState<Record<string, string>>({});
+  const articleRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadArticle();
+    loadUserWords();
+  }, [params.id]);
+
+  async function loadArticle() {
+    const res = await fetch(`/api/article/get?id=${params.id}`);
+    const data = await res.json();
+    setArticle(data);
+  }
+
+  async function loadUserWords() {
+    const res = await fetch("/api/words/list");
+    const data = await res.json();
+    const wordsMap: Record<string, string> = {};
+    (data.words || []).forEach((w: any) => {
+      wordsMap[w.word.toLowerCase()] = w.status;
+    });
+    setUserWords(wordsMap);
+  }
+
+  async function handleWordClick(word: string) {
+    const cleanWord = word.toLowerCase().replace(/[^a-z]/g, "");
+    if (!cleanWord || cleanWord.length < 2) return;
+
+    setSelectedWord(cleanWord);
+    setLoadingWord(true);
+
+    // Track click
+    await fetch("/api/words/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word: cleanWord, article_id: params.id }),
+    });
+
+    // Get definition
+    const res = await fetch(`/api/words/define?word=${cleanWord}`);
+    const data = await res.json();
+    setWordData(data);
+    setLoadingWord(false);
+  }
+
+  async function handleUpdateWordStatus(status: string) {
+    if (!selectedWord) return;
+
+    await fetch("/api/words/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        word: selectedWord,
+        status,
+        definition: wordData?.definition,
+        difficulty: wordData?.difficulty,
+        context: article?.title,
+      }),
+    });
+
+    setUserWords(prev => ({ ...prev, [selectedWord]: status }));
+    setSelectedWord(null);
+  }
+
+  if (!article) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-[var(--text-secondary)]">Loading article...</div>
+      </div>
+    );
+  }
+
+  const renderArticleText = () => {
+    const words = article.cached_text.split(/(\s+)/);
+    
+    return words.map((word: string, index: number) => {
+      if (!word.trim()) return <span key={index}>{word}</span>;
+      
+      const cleanWord = word.toLowerCase().replace(/[^a-z]/g, "");
+      const status = userWords[cleanWord];
+      
+      return (
+        <span
+          key={index}
+          className={`word-clickable ${
+            status === "known" ? "word-known" :
+            status === "learning" ? "word-learning" :
+            "word-unknown"
+          }`}
+          onClick={() => handleWordClick(word)}
+        >
+          {word}
+        </span>
+      );
+    });
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => router.back()}
+          className="flex items-center gap-2 text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition"
+        >
+          <ArrowLeft size={20} />
+          Back
+        </button>
+
+        <div className="flex items-center gap-4">
+          <span className="px-3 py-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg text-sm text-[var(--text-secondary)]">
+            {article.difficulty}
+          </span>
+          <span className="text-sm text-[var(--text-muted)]">
+            {article.word_count} words
+          </span>
+        </div>
+      </div>
+
+      {/* Article Content */}
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-8 shadow-lg">
+        <h1 className="text-4xl font-bold text-[var(--text-primary)] mb-2">
+          {article.title}
+        </h1>
+        
+        <p className="text-[var(--text-secondary)] mb-8 pb-8 border-b border-[var(--border-primary)]">
+          {article.summary}
+        </p>
+
+        <div ref={articleRef} className="article-text text-[var(--text-primary)]">
+          {renderArticleText()}
+        </div>
+      </div>
+
+      {/* Word Definition Popup */}
+      {selectedWord && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-slide-in">
+          <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-6 max-w-md w-full shadow-2xl">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-2xl font-bold text-[var(--text-primary)] mb-1">
+                  {selectedWord}
+                </h3>
+                {wordData && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-[var(--text-secondary)] italic">
+                      {wordData.partOfSpeech}
+                    </span>
+                    <span className="px-2 py-0.5 bg-[var(--bg-tertiary)] rounded text-xs text-[var(--text-secondary)]">
+                      {wordData.difficulty}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setSelectedWord(null)}
+                className="p-2 hover:bg-[var(--bg-tertiary)] rounded-lg transition"
+              >
+                <X size={20} className="text-[var(--text-secondary)]" />
+              </button>
+            </div>
+
+            {loadingWord ? (
+              <div className="py-8 text-center text-[var(--text-secondary)]">
+                Loading definition...
+              </div>
+            ) : wordData ? (
+              <div className="space-y-4">
+                <div>
+                  <h4 className="font-semibold text-[var(--text-primary)] mb-2">Definition</h4>
+                  <p className="text-[var(--text-secondary)]">{wordData.definition}</p>
+                </div>
+
+                {wordData.example && (
+                  <div>
+                    <h4 className="font-semibold text-[var(--text-primary)] mb-2">Example</h4>
+                    <p className="text-[var(--text-secondary)] italic">"{wordData.example}"</p>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={() => handleUpdateWordStatus("known")}
+                    className="flex-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/80 text-white py-3 rounded-lg font-semibold transition"
+                  >
+                    Mark as Known
+                  </button>
+                  <button
+                    onClick={() => handleUpdateWordStatus("learning")}
+                    className="flex-1 bg-[var(--accent-secondary)] hover:bg-[var(--accent-secondary)]/80 text-white py-3 rounded-lg font-semibold transition"
+                  >
+                    Add to Learning
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-4 flex items-center justify-center gap-6 text-sm">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-[var(--accent-primary)]" />
+          <span className="text-[var(--text-secondary)]">Known</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-[var(--accent-secondary)]" />
+          <span className="text-[var(--text-secondary)]">Learning</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-[var(--text-muted)]" />
+          <span className="text-[var(--text-secondary)]">Unknown</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// FILE: src/app/dashboard/page.tsx (UPDATED)
+// ============================================
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { BookOpen, TrendingUp, Award, Search } from "lucide-react";
+
+export default function DashboardPage() {
+  const router = useRouter();
+  const [profile, setProfile] = useState<any>(null);
+  const [userArticles, setUserArticles] = useState<any[]>([]);
+  const [stats, setStats] = useState({ wordsLearning: 0, wordsKnown: 0, articlesRead: 0 });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    // Load profile
+    const profileRes = await fetch("/api/profile/get");
+    const profileData = await profileRes.json();
+    setProfile(profileData.profile);
+
+    // Load user articles
+    const articlesRes = await fetch("/api/articles/user");
+    const articlesData = await articlesRes.json();
+    setUserArticles(articlesData.articles || []);
+
+    // Load word stats
+    const wordsRes = await fetch("/api/words/list");
+    const wordsData = await wordsRes.json();
+    const words = wordsData.words || [];
+    
+    setStats({
+      wordsLearning: words.filter((w: any) => w.status === "learning").length,
+      wordsKnown: words.filter((w: any) => w.status === "known").length,
+      articlesRead: articlesData.articles?.filter((a: any) => a.completed).length || 0,
+    });
+  }
+
+  async function handleSearch() {
+    if (!searchQuery.trim()) return;
+    
+    setSearching(true);
+    try {
+      const res = await fetch(`/api/articles/search?q=${encodeURIComponent(searchQuery)}`);
+      const data = await res.json();
+      setSearchResults(data.results || []);
+    } catch (error) {
+      alert("Search failed");
+    }
+    setSearching(false);
+  }
+
+  async function handleAddArticle(title: string) {
+    try {
+      const res = await fetch("/api/articles/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      
+      const data = await res.json();
+      if (data.article) {
+        router.push(`/article/${data.article.id}`);
+      }
+    } catch (error) {
+      alert("Failed to add article");
+    }
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Welcome Header */}
+      <div>
+        <h1 className="text-3xl font-bold text-[var(--text-primary)] mb-2">
+          Welcome back! 👋
+        </h1>
+        <p className="text-[var(--text-secondary)]">
+          Learning {profile?.target_language || "..."} • {profile?.proficiency_level || "..."} Level
+        </p>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-6 shadow-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-[var(--accent-secondary)]/20 rounded-lg">
+              <TrendingUp className="text-[var(--accent-secondary)]" size={24} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-[var(--text-primary)]">{stats.wordsLearning}</div>
+              <div className="text-sm text-[var(--text-secondary)]">Words Learning</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-6 shadow-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-[var(--accent-primary)]/20 rounded-lg">
+              <Award className="text-[var(--accent-primary)]" size={24} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-[var(--text-primary)]">{stats.wordsKnown}</div>
+              <div className="text-sm text-[var(--text-secondary)]">Words Known</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-6 shadow-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-[var(--accent-tertiary)]/20 rounded-lg">
+              <BookOpen className="text-[var(--accent-tertiary)]" size={24} />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-[var(--text-primary)]">{stats.articlesRead}</div>
+              <div className="text-sm text-[var(--text-secondary)]">Articles Read</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Search Wikipedia Articles */}
+      <div className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-6 shadow-lg">
+        <h2 className="text-xl font-bold text-[var(--text-primary)] mb-4">Find Articles on Wikipedia</h2>
+        
+        <div className="flex gap-3 mb-4">
+          <input
+            type="text"
+            placeholder="Search for topics you're interested in..."
+            className="flex-1 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-primary)] placeholder-[var(--text-muted)] p-3 rounded-lg focus:border-[var(--accent-primary)] focus:outline-none"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyPress={e => e.key === "Enter" && handleSearch()}
+          />
+          <button
+            onClick={handleSearch}
+            disabled={searching}
+            className="bg-[var(--accent-primary)] hover:bg-[var(--accent-tertiary)] text-white px-6 py-3 rounded-lg font-semibold transition disabled:opacity-50 flex items-center gap-2"
+          >
+            <Search size={20} />
+            Search
+          </button>
+        </div>
+
+        {searchResults.length > 0 && (
+          <div className="space-y-2">
+            {searchResults.map((result, index) => (
+              <div
+                key={index}
+                className="bg-[var(--bg-tertiary)] border border-[var(--border-primary)] p-4 rounded-lg hover:border-[var(--accent-primary)]/50 transition cursor-pointer"
+                onClick={() => handleAddArticle(result.title)}
+              >
+                <h3 className="font-semibold text-[var(--text-primary)] mb-1">{result.title}</h3>
+                <p className="text-sm text-[var(--text-secondary)]">{result.description}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Continue Reading */}
+      {userArticles.length > 0 && (
+        <div>
+          <h2 className="text-xl font-bold text-[var(--text-primary)] mb-4">Your Articles</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {userArticles.slice(0, 6).map((ua: any) => (
+              <Link
+                key={ua.id}
+                href={`/article/${ua.article_id}`}
+                className="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl p-5 shadow-lg hover:border-[var(--accent-primary)]/50 hover:shadow-xl transition"
+              >
+                <h3 className="font-bold text-[var(--text-primary)] mb-2">{ua.articles.title}</h3>
+                <p className="text-sm text-[var(--text-secondary)] mb-3 line-clamp-2">
+                  {ua.articles.summary}
+                </p>
+                
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-[var(--text-muted)]">
+                    {ua.articles.word_count} words
+                  </span>
+                  <span className="px-2 py-1 bg-[var(--bg-tertiary)] rounded text-[var(--text-secondary)]">
+                    {ua.articles.difficulty}
+                  </span>
+                </div>
+
+                {ua.progress > 0 && (
+                  <div className="mt-3">
+                    <div className="h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--accent-primary)] transition-all"
+                        style={{ width: `${ua.progress}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-[var(--text-muted)] mt-1">{ua.progress}% complete</p>
+                  </div>
+                )}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+} from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// ============================================
+// FILE: src/lib/types.ts
+// ============================================
+export interface UserProfile {
+  id: string;
+  email: string;
+  native_language: string | null;
+  target_language: string | null;
+  proficiency_level: string | null;
+  interests: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Article {
+  id: string;
+  title: string;
+  summary: string;
+  cached_text: string;
+  url: string;
+  topic: string;
+  word_count: number;
+  difficulty: string;
+  created_at: string;
+}
+
+export interface UserWord {
+  id: string;
+  user_id: string;
+  word: string;
+  status: 'unknown' | 'learning' | 'known';
+  difficulty: string;
+  definition: string;
+  context: string;
+  last_seen: string;
+  times_seen: number;
+  created_at: string;
+}
+
+export interface UserArticle {
+  id: string;
+  user_id: string;
+  article_id: string;
+  progress: number;
+  completed: boolean;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface ClickAnalytics {
+  id: string;
+  user_id: string;
+  article_id: string;
+  word: string;
+  clicked_at: string;
+}
+
+// ============================================
+// FILE: src/app/globals.css
+// ============================================
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Roboto+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light theme */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #e9ecef;
+  --text-primary: #212529;
+  --text-secondary: #495057;
+  --text-muted: #6c757d;
+  --border-primary: #dee2e6;
+  --accent-primary: #84994f;
+  --accent-secondary: #fcb53b;
+  --accent-tertiary: #a72703;
+  --accent-danger: #dc3545;
+  --shadow: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #151925;
+  --bg-tertiary: #1f2937;
+  --text-primary: #f8f9fa;
+  --text-secondary: #adb5bd;
+  --text-muted: #6c757d;
+  --border-primary: #374151;
+  --accent-primary: #84994f;
+  --accent-secondary: #fcb53b;
+  --accent-tertiary: #a72703;
+  --accent-danger: #dc3545;
+  --shadow: rgba(0, 0, 0, 0.3);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Nunito', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.article-text {
+  font-family: 'Roboto Mono', monospace;
+  line-height: 1.8;
+  font-size: 1.1rem;
+}
+
+.word-clickable {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.word-clickable:hover {
+  background-color: rgba(132, 153, 79, 0.2);
+  transform: translateY(-1px);
+}
+
+.word-known {
+  color: var(--accent-primary);
+  font-weight: 500;
+}
+
+.word-learning {
+  color: var(--accent-secondary);
+  font-weight: 500;
+}
+
+.word-unknown {
+  color: var(--text-primary);
+}
+
+/* Animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--accent-primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-tertiary);
+}
+
+// ============================================
+// FILE: src/app/api/profile/get/route.ts
+// ============================================
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+
+export async function GET(req: Request) {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ profile });
+  } catch (error) {
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/profile/update/route.ts
+// ============================================
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+
+export async function POST(req: Request) {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const { native_language, target_language, proficiency_level, interests } = body;
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({
+        native_language,
+        target_language,
+        proficiency_level,
+        interests,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id)
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ profile: data });
+  } catch (error) {
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/articles/search/route.ts
+// ============================================
+import { NextResponse } from "next/server";
+import axios from "axios";
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const query = searchParams.get("q");
+
+    if (!query) {
+      return NextResponse.json({ error: "Query required" }, { status: 400 });
+    }
+
+    const response = await axios.get(
+      `https://en.wikipedia.org/w/api.php`,
+      {
+        params: {
+          action: "opensearch",
+          search: query,
+          limit: 10,
+          namespace: 0,
+          format: "json",
+        },
+      }
+    );
+
+    const [_, titles, descriptions, urls] = response.data;
+    
+    const results = titles.map((title: string, index: number) => ({
+      title,
+      description: descriptions[index],
+      url: urls[index],
+    }));
+
+    return NextResponse.json({ results });
+  } catch (error) {
+    return NextResponse.json({ error: "Search failed" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/articles/fetch/route.ts
+// ============================================
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+import axios from "axios";
+
+export async function POST(req: Request) {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { title } = await req.json();
+
+    // Fetch article summary
+    const summaryRes = await axios.get(
+      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`
+    );
+
+    // Fetch full text
+    const textRes = await axios.get(
+      `https://en.wikipedia.org/api/rest_v1/page/plain/${encodeURIComponent(title)}`
+    );
+
+    const text = textRes.data;
+    const wordCount = text.split(/\s+/).length;
+
+    // Calculate difficulty based on word count and complexity
+    let difficulty = "B1";
+    if (wordCount > 2000) difficulty = "B2";
+    if (wordCount > 3500) difficulty = "C1";
+
+    const article = {
+      title: summaryRes.data.title,
+      summary: summaryRes.data.extract,
+      cached_text: text,
+      url: summaryRes.data.content_urls.desktop.page,
+      topic: summaryRes.data.title,
+      word_count: wordCount,
+      difficulty,
+    };
+
+    // Insert into database
+    const { data: inserted, error } = await supabase
+      .from("articles")
+      .insert(article)
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // Create user article relationship
+    await supabase.from("user_articles").insert({
+      user_id: user.id,
+      article_id: inserted.id,
+      progress: 0,
+      completed: false,
+      started_at: new Date().toISOString(),
+    });
+
+    return NextResponse.json({ article: inserted });
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to fetch article" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/articles/user/route.ts
+// ============================================
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+
+export async function GET(req: Request) {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { data, error } = await supabase
+      .from("user_articles")
+      .select(`
+        *,
+        articles (*)
+      `)
+      .eq("user_id", user.id)
+      .order("started_at", { ascending: false });
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ articles: data });
+  } catch (error) {
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/words/track/route.ts
+// ============================================
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+
+export async function POST(req: Request) {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { word, article_id } = await req.json();
+
+    // Track click analytics
+    await supabase.from("click_analytics").insert({
+      user_id: user.id,
+      article_id,
+      word: word.toLowerCase(),
+      clicked_at: new Date().toISOString(),
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to track" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/words/define/route.ts (UPDATED)
+// ============================================
+import { NextResponse } from "next/server";
+import axios from "axios";
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const word = searchParams.get("word");
+
+    if (!word) {
+      return NextResponse.json({ error: "Word required" }, { status: 400 });
+    }
+
+    // Fetch from Free Dictionary API
+    const response = await axios.get(
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`
+    );
+
+    const entry = response.data[0];
+    const definition = entry.meanings[0]?.definitions[0]?.definition || "No definition found";
+    const example = entry.meanings[0]?.definitions[0]?.example || "";
+    const partOfSpeech = entry.meanings[0]?.partOfSpeech || "";
+
+    // Simple difficulty estimation based on word length and syllables
+    let difficulty = "B1";
+    if (word.length > 8) difficulty = "B2";
+    if (word.length > 12) difficulty = "C1";
+
+    return NextResponse.json({
+      word,
+      definition,
+      example,
+      partOfSpeech,
+      difficulty,
+    });
+  } catch (error) {
+    return NextResponse.json({
+      word: req.url.split("word=")[1],
+      definition: "Definition not available",
+      difficulty: "B1",
+    });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/words/update/route.ts (UPDATED)
+// ============================================
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+
+export async function POST(req: Request) {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { word, status, definition, difficulty, context } = await req.json();
+
+    // Check if word exists
+    const { data: existing } = await supabase
+      .from("user_words")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("word", word.toLowerCase())
+      .single();
+
+    if (existing) {
+      // Update existing word
+      const { data, error } = await supabase
+        .from("user_words")
+        .update({
+          status,
+          last_seen: new Date().toISOString(),
+          times_seen: existing.times_seen + 1,
+        })
+        .eq("id", existing.id)
+        .select()
+        .single();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ word: data });
+    } else {
+      // Insert new word
+      const { data, error } = await supabase
+        .from("user_words")
+        .insert({
+          user_id: user.id,
+          word: word.toLowerCase(),
+          status,
+          definition: definition || "",
+          difficulty: difficulty || "B1",
+          context: context || "",
+          last_seen: new Date().toISOString(),
+          times_seen: 1,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ word: data });
+    }
+  } catch (error) {
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/api/words/list/route.ts
+// ============================================
+import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+
+export async function GET(req: Request) {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const status = searchParams.get("status");
+
+    let query = supabase
+      .from("user_words")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("last_seen", { ascending: false });
+
+    if (status && status !== "all") {
+      query = query.eq("status", status);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ words: data });
+  } catch (error) {
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
+// ============================================
+// FILE: src/app/onboarding/page.tsx
+// ============================================
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+
+const languages = [
+  "English", "Spanish", "French", "German", "Italian", "Portuguese",
+  "Chinese", "Japanese", "Korean", "Arabic", "Russian", "Hindi"
+];
+
+const levels = [
+  { value: "A1", label: "A1 - Beginner" },
+  { value: "A2", label: "A2 - Elementary" },
+  { value: "B1", label: "B1 - Intermediate" },
+  { value: "B2", label: "B2 - Upper Intermediate" },
+  { value: "C1", label: "C1 - Advanced" },
+  { value: "C2", label: "C2 - Proficient" },
+];
+
+const interests = [
+  "Technology", "Science", "History", "Arts", "Sports",
+  "Politics", "Business", "Health", "Travel", "Food"
+];
+
+export default function OnboardingPage() {
+  const router = useRouter();
+  const [step, setStep] = useState(1);
+  const [formData, setFormData] = useState({
+    native_language: "",
+    target_language: "",
+    proficiency_level: "",
+    interests: [] as string[],
+  });
+
+  const handleInterestToggle = (interest: string) => {
+    setFormData(prev => ({
+      ...prev,
+      interests: prev.interests.includes(interest)
+        ? prev.interests.filter(i => i !== interest)
+        : [...prev.interests, interest]
+    }));
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const response = await fetch("/api/profile/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+
+      if (response.ok) {
+        router.push("/dashboard");
+      }
+    } catch (error) {
+      alert("Failed to save profile");
+    }
+  };
+
+  return (
+    <main className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)] p-8">
+      <div className="max-w-2xl w-full bg-[var(--bg-secondary)] p-8 rounded-xl shadow-lg border border-[var(--border-primary)]">
+        <h1 className="text-3xl font-bold mb-2 text-[var(--text-primary)]">Welcome to Langpilto!</h1>
+        <p className="text-[var(--text-secondary)] mb-8">Let's personalize your learning experience</p>
+
+        {/* Progress bar */}
+        <div className="mb-8">
+          <div className="flex justify-between mb-2">
+            {[1, 2, 3].map(s => (
+              <div
+                key={s}
+                className={`w-1/3 h-2 rounded ${
+                  s <= step ? "bg-[var(--accent-primary)]" : "bg-[var(--bg-tertiary)]"
+                }`}
+              />
+            ))}
+          </div>
+          <p className="text-sm text-[var(--text-secondary)]">Step {step} of 3</p>
+        </div>
+
+        {/* Step 1: Languages */}
+        {step === 1 && (
+          <div className="space-y-6">
+            <div>
+              <label className="block text-[var(--text-primary)] font-semibold mb-2">
+                What's your native language?
+              </label>
+              <select
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-primary)] p-3 rounded-lg focus:border-[var(--accent-primary)] focus:outline-none"
+                value={formData.native_language}
+                onChange={e => setFormData({...formData, native_language: e.target.value})}
+              >
+                <option value="">Select language</option>
+                {languages.map(lang => (
+                  <option key={lang} value={lang}>{lang}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[var(--text-primary)] font-semibold mb-2">
+                What language do you want to learn?
+              </label>
+              <select
+                className="w-full bg-[var(--bg-tertiary)] border border-[var(--border-primary)] text-[var(--text-primary)] p-3 rounded-lg focus:border-[var(--accent-primary)] focus:outline-none"
+                value={formData.target_language}
+                onChange={e => setFormData({...formData, target_language: e.target.value})}
+              >
+                <option value="">Select language</option>
+                {languages.map(lang => (
+                  <option key={lang} value={lang}>{lang}</option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={() => setStep(2)}
+              disabled={!formData.native_language || !formData.target_language}
+              className="w-full bg-[var(--accent-primary)] hover:bg-[var(--accent-tertiary)] text-white p-3 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
+
+        {/* Step 2: Proficiency Level */}
+        {step === 2 && (
+          <div className="space-y-6">
+            <div>
+              <label className="block text-[var(--text-primary)] font-semibold mb-4">
+                What's your current level in {formData.target_language}?
+              </label>
+              <div className="space-y-3">
+                {levels.map(level => (
+                  <button
+                    key={level.value}
+                    onClick={() => setFormData({...formData, proficiency_level: level.value})}
+                    className={`w-full p-4 rounded-lg border-2 transition text-left ${
+                      formData.proficiency_level === level.value
+                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10"
+                        : "border-[var(--border-primary)] hover:border-[var(--accent-primary)]/50"
+                    }`}
+                  >
+                    <div className="font-semibold text-[var(--text-primary)]">{level.label}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <button
+                onClick={() => setStep(1)}
+                className="flex-1 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-tertiary)]/80 text-[var(--text-primary)] p-3 rounded-lg font-semibold transition"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => setStep(3)}
+                disabled={!formData.proficiency_level}
+                className="flex-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-tertiary)] text-white p-3 rounded-lg font-semibold transition disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Interests */}
+        {step === 3 && (
+          <div className="space-y-6">
+            <div>
+              <label className="block text-[var(--text-primary)] font-semibold mb-4">
+                What topics interest you? (Select at least 3)
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                {interests.map(interest => (
+                  <button
+                    key={interest}
+                    onClick={() => handleInterestToggle(interest)}
+                    className={`p-3 rounded-lg border-2 transition ${
+                      formData.interests.includes(interest)
+                        ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]"
+                        : "border-[var(--border-primary)] text-[var(--text-primary)] hover:border-[var(--accent-primary)]/50"
+                    }`}
+                  >
+                    {interest}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <button
+                onClick={() => setStep(2)}
+                className="flex-1 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-tertiary)]/80 text-[var(--text-primary)] p-3 rounded-lg font-semibold transition"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={formData.interests.length < 3}
+                className="flex-1 bg-[var(--accent-primary)] hover:bg-[var(--accent-tertiary)] text-white p-3 rounded-lg font-semibold transition disabled:opacity-50"
+              >
+                Complete Setup
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
