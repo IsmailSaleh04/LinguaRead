@@ -54,23 +54,21 @@ export default function ProfileDropdown() {
       {/* Profile Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-3 px-4 py-2 rounded-lg border-2 border-brown border-opacity-20 
-                   hover:border-orange hover:bg-orange hover:bg-opacity-10 transition-all"
+        aria-label="Open profile menu"
+        className="w-10 h-10 rounded-full bg-orange text-white font-bold
+             flex items-center justify-center
+             hover:ring-2 hover:ring-orange hover:ring-offset-2
+             transition-all"
       >
-        <div className="w-10 h-10 rounded-full bg-orange text-white font-bold flex items-center justify-center">
-          {getInitials()}
-        </div>
-        <span className="font-bold text-dark">{user?.email?.split('@')[0] || 'User'}</span>
-        <ChevronDown 
-          size={20} 
-          className={`text-brown transition-transform ${isOpen ? 'rotate-180' : ''}`} 
-        />
+        {getInitials()}
       </button>
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl border-2 border-brown border-opacity-20 
-                      shadow-2xl z-50 overflow-hidden">
+        <div
+          className="absolute right-0 mt-2 w-64 bg-white rounded-xl border-2 border-brown border-opacity-20 
+                      shadow-2xl z-50 overflow-hidden"
+        >
           {/* User Info Section */}
           <div className="p-4 border-b-2 border-brown border-opacity-20 bg-cream">
             <div className="flex items-center gap-3 mb-2">
@@ -78,7 +76,9 @@ export default function ProfileDropdown() {
                 {getInitials()}
               </div>
               <div className="flex-1">
-                <p className="font-bold text-dark">{user?.email?.split('@')[0] || 'User'}</p>
+                <p className="font-bold text-dark">
+                  {user?.email?.split("@")[0] || "User"}
+                </p>
                 <p className="text-sm text-brown">{user?.email}</p>
               </div>
             </div>
@@ -87,7 +87,7 @@ export default function ProfileDropdown() {
           {/* Menu Items */}
           <div className="py-2">
             <button
-              onClick={() => handleNavigation('/vocabulary')}
+              onClick={() => handleNavigation("/vocabulary")}
               className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-cream transition-colors"
             >
               <BookOpen size={20} className="text-brown" />
@@ -98,7 +98,7 @@ export default function ProfileDropdown() {
             </button>
 
             <button
-              onClick={() => handleNavigation('/progress')}
+              onClick={() => handleNavigation("/progress")}
               className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-cream transition-colors"
             >
               <BarChart3 size={20} className="text-brown" />
@@ -111,7 +111,7 @@ export default function ProfileDropdown() {
             <div className="my-2 border-t-2 border-brown border-opacity-10" />
 
             <button
-              onClick={() => handleNavigation('/languages')}
+              onClick={() => handleNavigation("/languages")}
               className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-cream transition-colors"
             >
               <Globe size={20} className="text-brown" />
@@ -122,7 +122,7 @@ export default function ProfileDropdown() {
             </button>
 
             <button
-              onClick={() => handleNavigation('/topics')}
+              onClick={() => handleNavigation("/topics")}
               className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-cream transition-colors"
             >
               <Tags size={20} className="text-brown" />
@@ -133,7 +133,7 @@ export default function ProfileDropdown() {
             </button>
 
             <button
-              onClick={() => handleNavigation('/settings')}
+              onClick={() => handleNavigation("/settings")}
               className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-cream transition-colors"
             >
               <Settings size={20} className="text-brown" />

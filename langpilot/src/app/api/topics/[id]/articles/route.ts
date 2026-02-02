@@ -24,15 +24,13 @@ export async function GET(
     const offset = parseInt(searchParams.get('offset') || '0');
 
     const result = await query(
-      `SELECT a.*, ARRAY_AGG(DISTINCT t.name) as topics
-       FROM articles a
-       JOIN article_topics at ON a.id = at.article_id
-       LEFT JOIN article_topics at2 ON a.id = at2.article_id
-       LEFT JOIN topics t ON at2.topic_id = t.id
-       WHERE at.topic_id = $1 AND a.language_code = $2
-       GROUP BY a.id
-       ORDER BY a.created_at DESC
-       LIMIT $3 OFFSET $4`,
+      `SELECT a.*
+FROM articles a
+JOIN article_topics at ON a.id = at.article_id
+WHERE at.topic_id = $1 
+  AND a.language_code = $2
+ORDER BY a.created_at DESC
+LIMIT $3 OFFSET $4`,
       [id, language, limit, offset]
     );
 

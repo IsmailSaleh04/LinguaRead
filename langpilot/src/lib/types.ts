@@ -92,6 +92,7 @@ export interface TargetLanguage {
 }
 
 export interface UserPreferences {
+  current_language: string;
   user_id: string;
   preferred_topics: number[];
   daily_goal_minutes: number;

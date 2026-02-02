@@ -37,10 +37,10 @@ export default function TopNav() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${
+                  className={`flex items-center gap-3 px-4 py-2 rounded-lg font-bold transition-all ${
                     isActive
-                      ? 'bg-orange text-white'
-                      : 'text-brown hover:bg-brown hover:bg-opacity-10'
+                      ? 'bg-orange text-white border-2 border-brown'
+                      : 'text-darkbrown border-1 border-darkbrown hover:bg-brown hover:bg-opacity-10'
                   }`}
                 >
                   <Icon size={18} />

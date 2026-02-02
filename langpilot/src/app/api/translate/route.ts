@@ -16,28 +16,25 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { text, from, to } = body;
 
-    // Using LibreTranslate (free, self-hosted option)
-    // Or you can use Google Translate API, DeepL API
-    const response = await fetch('https://libretranslate.com/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        q: text,
-        source: from,
-        target: to,
-        format: 'text',
-      }),
-    });
+    // MyMemory Translation API - FREE, 1000 requests/day
+    const url = new URL('https://api.mymemory.translated.net/get');
+    url.searchParams.append('q', text);
+    url.searchParams.append('langpair', `${from}|${to}`);
 
+    const response = await fetch(url.toString());
     const data = await response.json();
 
-    return NextResponse.json<ApiResponse>({
-      success: true,
-      data: {
-        translation: data.translatedText,
-        source: text,
-      },
-    });
+    if (data.responseStatus === 200 || data.responseData) {
+      return NextResponse.json<ApiResponse>({
+        success: true,
+        data: {
+          translation: data.responseData.translatedText,
+          source: text,
+        },
+      });
+    }
+
+    throw new Error('Translation failed');
 
   } catch (error) {
     console.error('Translation error:', error);
@@ -47,3 +44,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

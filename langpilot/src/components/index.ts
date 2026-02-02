@@ -9,9 +9,10 @@ export { default as LoadingSpinner } from './common/LoadingSpinner';
 export { default as ErrorMessage } from './common/ErrorMessage';
 
 // Layout Components
-export { default as Sidebar } from './layout/TopNav';
-export { default as Header } from './layout/Header';
+export { default as TopNav } from './layout/TopNav';
 export { default as ProtectedRoute } from './layout/ProtectedRoute';
+export { default as Footer } from './layout/Footer';
+export { default as ProfileDropdown } from './layout/ProfileDropdown';
 
 // Vocabulary Components
 export { default as WordCard } from './vocabulary/WordCard';
