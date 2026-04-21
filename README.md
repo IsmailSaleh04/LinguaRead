@@ -8,7 +8,9 @@ LinguaRead is a language-learning web app built on the idea that immersive readi
 
 ## Video Preview
 
-![Video](public/video/LinguaRead-preview.mp4)
+https://github.com/user-attachments/assets/fe519cf9-5f80-4792-8ac4-c079c77c5407
+
+> *Can't play the video above? Find it at [`public/video/LinguaRead-video-preview.mp4`](public/video/LinguaRead-preview.mp4).*
 
 ---
 
