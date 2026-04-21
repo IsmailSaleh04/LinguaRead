@@ -60,7 +60,10 @@ export const articlesApi = {
     });
   },
 
-  async fetchWikipediaArticle(title: string, language: string) {
+  async fetchWikipediaArticle(
+    title: string,
+    language: string,
+  ): Promise<ApiResponse<{ article: Article; wordData: any[] }>> {
     return apiCall("/api/articles/fetch-wikipedia", {
       method: "POST",
       body: JSON.stringify({ title, language }),

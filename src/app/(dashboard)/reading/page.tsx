@@ -85,7 +85,7 @@ export default function ReadingPage() {
   };
 
   const handleArticleSelect = async (title: string) => {
-    if (loadingArticleTitle) return; // prevent concurrent fetches
+    if (loadingArticleTitle) return;
     setLoadingArticleTitle(title);
     try {
       const response = await articlesApi.fetchWikipediaArticle(
@@ -93,7 +93,9 @@ export default function ReadingPage() {
         currentLanguage,
       );
       if (response.success && response.data) {
-        router.push(`/reading/${response.data.articleId}`);
+        // Was: response.data.articleId  ← undefined
+        // Fix: response.data.article.id ← correct
+        router.push(`/reading/${response.data.article.id}`);
       }
     } catch (error) {
       console.error("Failed to load article:", error);
