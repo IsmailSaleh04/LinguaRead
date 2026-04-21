@@ -1,0 +1,53 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getUserFromRequest } from '@/lib/auth';
+import { ApiResponse } from '@/lib/types';
+import { query } from '@/db/db';
+
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+
+  // Validate article ID
+  const articleId = Number(id);
+  if (Number.isNaN(articleId) || articleId <= 0) {
+    return NextResponse.json<ApiResponse>(
+      { success: false, error: 'Invalid article ID' },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const user = await getUserFromRequest(request);
+    if (!user) {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    const result = await query(
+      `SELECT w.*, aw.occurrence_count, 
+              COALESCE(uw.status, 'unknown') as user_status
+       FROM article_words aw
+       JOIN words w ON aw.word_id = w.id
+       LEFT JOIN user_words uw ON w.id = uw.word_id AND uw.user_id = $1
+       WHERE aw.article_id = $2
+       ORDER BY w.frequency_rank ASC NULLS LAST`,
+      [user.userId, articleId]
+    );
+
+    return NextResponse.json<ApiResponse>({
+      success: true,
+      data: result.rows,
+    });
+
+  } catch (error) {
+    console.error('Get article words error:', error);
+    return NextResponse.json<ApiResponse>(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
